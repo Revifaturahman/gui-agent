@@ -8,6 +8,95 @@ const app = express()
 
 app.use(express.json())
 
+function getLocator(page, element) {
+
+    if (element.name) {
+        return page.locator(
+            `${element.tag}[name="${element.name}"]`
+        );
+    }
+
+    if (element.tag === "button" && element.type) {
+        return page.locator(
+            `button[type="${element.type}"]`
+        );
+    }
+
+    return page.locator(element.tag).nth(
+        element.id - 1
+    );
+}
+
+async function executeActions(page, elements, aiResponse) {
+
+    const actions = aiResponse.actions || [aiResponse];
+
+    for (const action of actions) {
+
+        const element = elements.find(
+            item => item.id === action.element_id
+        );
+
+        if (!element) {
+            throw new Error(
+                `Element dengan id ${action.element_id} tidak ditemukan`
+            );
+        }
+
+        if (!element.visible) {
+            throw new Error(
+                `Element ${action.element_id} tidak terlihat`
+            );
+        }
+
+        if (!element.enabled) {
+            throw new Error(
+                `Element ${action.element_id} tidak aktif`
+            );
+        }
+
+        const locator = getLocator(page, element);
+
+        console.log("Menjalankan:", action);
+
+        const actionMap = {
+            fill: "fill",
+            set_value: "fill",
+            click: "click",
+            select: "select"
+        };
+
+        const normalizedAction = actionMap[action.action];
+
+        switch (normalizedAction) {
+
+            case "fill":
+
+                await locator.fill(action.value);
+
+                break;
+
+            case "click":
+
+                await locator.click();
+
+                break;
+
+            case "select":
+
+                await locator.selectOption(action.value);
+
+                break;
+
+            default:
+
+                throw new Error(
+                    `Action tidak didukung: ${action.action}`
+                );
+        }
+    }
+}
+
 async function Nara(elements, instruction) {
 
     console.log("elements: ", elements)
@@ -23,48 +112,28 @@ async function Nara(elements, instruction) {
         },
         body: JSON.stringify({
             'model': 'nemotron-3-ultra-free',
+            'response_format': {
+                'type': 'json_object'
+            },
             'messages': [
                 {
                     'role': 'system',
                     'content': `
-                        Kamu adalah AI GUI Agent yang bertugas menentukan action untuk Playwright.
+                        Kamu adalah AI GUI Agent untuk Playwright.
 
-                        Kamu akan menerima:
-                        1. Instruksi dari user.
-                        2. Daftar element GUI yang ditemukan dari halaman website.
-
-                        Setiap element memiliki format:
-
-                        {
-                            "id": number,
-                            "tag": string,
-                            "type": string | null,
-                            "name": string | null,
-                            "placeholder": string | null,
-                            "label": string | null,
-                            "visible": boolean,
-                            "enabled": boolean
-                        }
-
-                        Tugas kamu:
-                        - Pahami instruksi user.
-                        - Cari element yang sesuai dengan instruksi.
-                        - Gunakan "id" dari element sebagai "element_id".
-                        - Hanya gunakan element yang tersedia.
+                        Tugas:
+                        - Terima instruksi user.
+                        - Analisis daftar element GUI.
+                        - Tentukan action yang harus dijalankan.
+                        - Gunakan hanya element yang tersedia.
+                        - Gunakan nilai "id" element sebagai "element_id".
                         - Jangan membuat element_id baru.
-                        - Jangan menggunakan element yang visible=false.
-                        - Jangan menggunakan element yang enabled=false.
-                        - Tentukan action yang paling sesuai.
-                        - Property untuk menunjuk element HARUS bernama "element_id".
-                        - Jangan gunakan nama "target_id".
-                        - Jangan gunakan nama property lain untuk menunjuk element.
+                        - Jangan gunakan element dengan visible=false.
+                        - Jangan gunakan element dengan enabled=false.
 
-                        Action yang diperbolehkan:
+                        ACTION YANG BOLEH:
 
                         1. fill
-                        Digunakan untuk mengisi input atau textarea.
-
-                        Format:
                         {
                             "action": "fill",
                             "element_id": 2,
@@ -72,44 +141,135 @@ async function Nara(elements, instruction) {
                         }
 
                         2. click
-                        Digunakan untuk menekan button atau link.
-
-                        Format:
                         {
                             "action": "click",
                             "element_id": 4
                         }
 
                         3. select
-                        Digunakan untuk memilih option pada select.
-
-                        Format:
                         {
                             "action": "select",
                             "element_id": 5,
                             "value": "option_value"
                         }
 
-                        Aturan output:
-                        - Output HARUS berupa JSON valid.
-                        - Jangan menggunakan markdown.
-                        - Jangan menggunakan code block.
-                        - Jangan memberikan penjelasan.
-                        - Jangan memberikan HTML.
-                        - Jangan memberikan kode Playwright.
-                        - Jangan memberikan rekomendasi.
-                        - Jangan menambahkan property selain yang diperlukan.
-                        - Jika hanya satu action diperlukan, kembalikan satu object action.
-                        - Jika beberapa action diperlukan, kembalikan object "actions".
+
+                        IDENTITAS ELEMENT:
+
+                        Untuk menentukan element yang akan digunakan,
+                        WAJIB menggunakan property "element_id".
+
+                        "element_id" HARUS berupa angka.
+
+                        Nilai "element_id" HARUS sama dengan nilai "id"
+                        dari element yang diberikan.
+
+                        JANGAN membuat object untuk target.
+
+                        BENAR:
+                        {
+                            "action": "fill",
+                            "element_id": 2,
+                            "value": "admin"
+                        }
+
+                        SALAH:
+                        {
+                            "action": "fill",
+                            "target": {
+                                "id": 2,
+                                "name": "username",
+                                "type": "text"
+                            },
+                            "value": "admin"
+                        }
+
+                        SALAH:
+                        {
+                            "action": "fill",
+                            "target_id": 2,
+                            "value": "admin"
+                        }
+
+                        SALAH:
+                        {
+                            "action": "fill",
+                            "element": 2,
+                            "value": "admin"
+                        }
+
+
+                        ATURAN JSON — WAJIB:
+
+                        Output akan langsung diproses menggunakan JSON.parse().
+
+                        Output HARUS berupa JSON valid.
+
+                        Output HARUS dimulai langsung dengan "{"
+                        dan diakhiri langsung dengan "}".
+
+                        DILARANG:
+                        - memberikan penjelasan
+                        - memberikan analisis
+                        - memberikan alasan
+                        - memberikan kalimat tambahan
+                        - menggunakan Markdown
+                        - menggunakan code block
+                        - menggunakan property "target_id"
+                        - menggunakan property "target"
+                        - menggunakan property "element"
+                        - menggunakan property "elementId"
+                        - menggunakan property selain yang ditentukan
+                        - membuat object target
+                        - memasukkan informasi element seperti name, type,
+                        placeholder, atau label ke dalam action
+
+                        JANGAN PERNAH menghasilkan:
+                        Berdasarkan data...
+                        Action:
+                        Berikut hasilnya...
+                        \`\`\`json
+                        ...
+                        \`\`\`
+
+                        FORMAT OUTPUT:
+
+                        Output WAJIB selalu memiliki property "actions".
+
+                        "actions" WAJIB berupa array.
+
+                        Setiap action WAJIB memiliki property "action" dan "element_id".
 
                         Contoh satu action:
 
                         {
-                            "action": "click",
-                            "element_id": 4
+                            "actions": [
+                                {
+                                    "action": "fill",
+                                    "element_id": 2,
+                                    "value": "admin"
+                                }
+                            ]
                         }
 
-                        Contoh beberapa action:
+                        Contoh dua action:
+
+                        {
+                            "actions": [
+                                {
+                                    "action": "fill",
+                                    "element_id": 2,
+                                    "value": "admin"
+                                },
+                                {
+                                    "action": "fill",
+                                    "element_id": 3,
+                                    "value": "123456"
+                                }
+                            ]
+                        }
+
+                        Contoh tiga action:
 
                         {
                             "actions": [
@@ -130,11 +290,24 @@ async function Nara(elements, instruction) {
                             ]
                         }
 
-                        Jika instruksi user tidak dapat dilakukan berdasarkan element yang tersedia, kembalikan:
+                        Jika instruksi tidak dapat dilakukan:
 
                         {
                             "actions": []
                         }
+
+                        JIKA TIDAK BISA MELAKUKAN INSTRUKSI:
+
+                        {"actions":[]}
+
+                        INGAT:
+
+                        Output HANYA JSON.
+                        Tidak boleh ada teks apapun sebelum atau sesudah JSON.
+                        Jangan memberikan penjelasan.
+                        Jangan memberikan pseudocode.
+                        Jangan memberikan kode Playwright.
+                        Jangan memberikan Markdown.
                     `,
 
                     'role': 'user',
@@ -239,13 +412,24 @@ app.post("/analyse/gui-ai", async (req,res) => {
 
             const aiResponse = await Nara(elements, instruction)
 
-            await browser.close()
+            console.log("AI RAW RESPONSE:");
+            console.log(aiResponse);
+
+            const actions = JSON.parse(aiResponse);
+
+            await executeActions(
+                page,
+                elements,
+                actions
+            );
+
+            // await browser.close();
 
             return res.status(200).json({
                 success: true,
-                message: "data berhasil didapatkan",
+                message: "GUI berhasil dianalisis dan action dijalankan",
                 elements: elements,
-                aiResponse: aiResponse
+                aiResponse: actions
             });
 
     } catch (error) {
